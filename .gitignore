@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 .coverage
+/.doc_hash
 
 # Keep shared Trellis specs; all other Trellis files stay local.
 /.trellis/*

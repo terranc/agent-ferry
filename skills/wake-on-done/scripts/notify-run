@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# notify-run: run a command; when it ends, POST a completion notice to the relay webhook.
+set -u
+OWNER=""; TASK=""; LOG=""
+while [ $# -gt 0 ]; do case "$1" in
+  --owner) OWNER="$2"; shift 2;; --task) TASK="$2"; shift 2;; --log) LOG="$2"; shift 2;;
+  --) shift; break;; *) break;; esac; done
+if [ -z "$OWNER" ] || [ -z "$TASK" ] || [ $# -eq 0 ]; then
+  echo "usage: notify-run --owner <bot id> --task <name> [--log path] -- <command...>" >&2; exit 2; fi
+CFG="${XDG_CONFIG_HOME:-$HOME/.config}/webhook-relay/url.env"
+[ -f "$CFG" ] && . "$CFG"
+LOG="${LOG:-/tmp/notify-run-$(date +%Y%m%d-%H%M%S)-$$.log}"
+TAIL="${NOTIFY_TAIL_CHARS:-300}"
+START=$(date '+%F %T %z'); SENT=0; CODE=255
+notify() {
+  [ "$SENT" = 1 ] && return; SENT=1
+  local key="${WEBHOOK_RELAY_KEY:-}"; key="${key#Authorization: }"; key="${key#Bearer }"
+  if [ -z "${WEBHOOK_RELAY_URL:-}" ] || [ -z "$key" ]; then echo "notify-run: missing URL or key, no notice sent" >&2; return; fi
+  local body
+  body=$(OWNER="$OWNER" TASK="$TASK" CODE="$CODE" LOG="$LOG" START="$START" TAIL="$TAIL" HOST="$(hostname)" python3 - <<'PY'
+import json, os, datetime
+log = os.environ["LOG"]
+try:
+    n = int(os.environ["TAIL"] or 0)
+    with open(log, errors="replace") as f: tail = f.read()[-n:] if n > 0 else ""
+except Exception: tail = ""
+print(json.dumps({"owner": os.environ["OWNER"], "task": os.environ["TASK"],
+  "exit_code": int(os.environ["CODE"]), "status": "succeeded" if os.environ["CODE"] == "0" else "failed",
+  "machine": os.environ["HOST"], "started_at": os.environ["START"],
+  "ended_at": datetime.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z"),
+  "log_path": log, "output_tail": tail}))
+PY
+)
+  for i in 1 2 3; do
+    curl -s -m 20 -o /dev/null -w '%{http_code}' -X POST "$WEBHOOK_RELAY_URL" \
+      -H "Authorization: Bearer $key" -H "Content-Type: application/json" --data-binary "$body" | grep -q '^2' && return
+    sleep $((i*5))
+  done
+  echo "notify-run: sending notice failed after 3 tries" >&2
+}
+trap 'CODE=130; notify; exit 130' INT TERM
+"$@" >"$LOG" 2>&1; CODE=$?
+notify; exit $CODE
