@@ -19,8 +19,12 @@ These guides help you **ask the right questions before coding**.
 
 ## Available Guides
 
+This project develops directly on `master` by default. Read the Git Workflow
+guide before choosing a branch, committing, or pushing.
+
 | Guide | Purpose | When to Use |
 |-------|---------|-------------|
+| [Git Workflow](./git-workflow.md) | Direct master development and preservation of local-only configuration | Before branch changes, commits, or pushes |
 | [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md) | Identify patterns and reduce duplication | When you notice repeated patterns |
 | [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md) | Think through data flow across layers | Features spanning multiple layers |
 
