@@ -4,7 +4,33 @@
 
 可以选择 **Claude Code、Codex、Grok Build、Pi Agent、Kimi Code**。你在聊天里提出需求，所选工具在自己的 Mac 上干活；完成后由 Bot 把结果带回同一段对话。想再改一点，就接着说，不用重新解释整个项目。
 
-## 可以这样用
+## 快速接入
+
+第一次用，按下面五步做。分支情况和命令细节见 [安装引导](skills/ferry/references/setup.md)；Bot 日常怎么调用见 [ferry skill](skills/ferry/SKILL.md)。
+
+1. **Mac 已接到 Grok Bot。** 这台机器要能执行命令（本机执行 / Machine Shell）。只有一台就用这一台。平台连不上时，先补上连接，不要当成已经装好。
+2. **至少一种编程工具已在这台 Mac 上安装并登录。** 五种不必都有。没指定时默认 Claude Code。
+3. **项目放在 `~/www/<项目名>`。** `~/www` 本身不能当工作目录。
+4. **让 Bot 装好 ferry。** 两条路，装的是同一套东西：
+   - 用你现在的 Grok Bot，把下面这段话发给它。
+   - 或者单独用一个专门跑这条通道的 Bot（自行创建，或使用你已有的同类 Bot）。本仓库没有公开模板地址。那个 Bot 也要装完整 skill。
+5. **之后直接说人话。** 不必每次提到 ferry，也不必记命令。
+
+把这段话发给负责安装的 Bot：
+
+> 请安装并配置 ferry，按仓库里的安装引导做完。只保存 SKILL.md 不算装好。
+> 仓库：https://github.com/terranc/agent-ferry
+>
+> 把 `skills/ferry/` 和 `skills/wake-on-done/` 两个完整目录装进当前 Bot 的 skill 库，references 和 scripts 都要在，脚本保持可执行。
+> 在已连接的 Mac 上，把仓库克隆或更新到 `~/www/agent-ferry`。目录里已有内容时先核对来源和现有改动，不要覆盖或强制重置。然后运行 `./install.sh`，再运行 `~/.local/bin/ferry doctor`。
+> 配好 wake-on-done 中继，让完成和审批通知唤醒当前这个 Bot。中继可以共用；每一轮的 `--owner` 用当前 Bot 自己的 id，不用中继的 id，也不用显示名。
+> 把长期路由记下来，并读回核对：以后我在这台 Mac 上用 Claude Code、Codex、Grok Build、Pi 或 Kimi 写程序、修 bug 或继续任务时，自动通过 ferry 执行。我不用说 ferry。未指定工具时默认 Claude Code；继续时沿用原来的工具和会话，不能混用。
+> 在 `~/www` 下一个真实项目目录里做一次 Hello World（例如 `~/www/ferry-e2e`），确认结果回到当前对话。
+> 分别说明命令行、完成通知、长期路由、审批通知是否已经验证。没跑通的标成未验证，不要当成接入成功。
+
+装好后另开一个新对话，先说“在我的 Mac 上写一个 Hello World”，再说“继续刚才的任务”。用来确认它会自己走 ferry，并续上同一次会话。新对话自动选中和跨对话续接仍需联调；没跑通就保持未验证。
+
+## 日常怎么说
 
 > 在我的 Mac 上，用 Claude Code 写一个 Hello World 程序，运行一下，完成后告诉我。
 
@@ -16,45 +42,48 @@
 
 > 这次用 opus，帮我看看这个项目为什么启动不了。
 
-ferry 帮你连接 Grok Bot 和这些本机工具，使用电脑上已有的登录。未指定工具时默认 Claude Code，继续任务时沿用上次的工具。
+未指定工具时默认 Claude Code。继续任务时沿用上次的工具。说“这次用 opus”只换模型，不换工具。
 
-## 开始使用
+## Grok Bot 接入最佳实践
 
-先准备好：
+和 [ferry skill](skills/ferry/SKILL.md)、[安装引导](skills/ferry/references/setup.md) 一致。下面是接入时要守住的点，具体命令以 skill 为准。
 
-- 一台能被 Grok Bot 访问的 Mac。
-- Mac 上已经安装并登录你想用的编程工具，不需要五种都安装。
-- 一个你平时使用的 Grok Bot。
+- 在 Mac 上用这五种工具写程序、修 bug 或继续任务时，都走 ferry。默认 Claude Code。只说“继续”时，沿用上一轮的工具和原生 session。一个工具的 session 不能交给另一个工具。指定的工具不可用时说明原因，不自动更换。
+- 每一轮 `--owner` 填**这个 Bot 自己的 id**。不填中继 Bot 的 id，也不填显示名或示例占位符。
+- 后台执行和完成通知由 ferry 自己接上 wake-on-done。`ferry run` 外面不要再包 `notify-run`、`nohup`，也不要再加 `&`。
+- 完成和审批通过 wake-on-done 唤醒发起这轮的 Bot。返回里 `notify` 为 `none` 时，说明通知不可用，并改查 `ferry status`。这时不要说完成后会自动回来。
+- 审批时给出 `approval_id`、路径或命令、`summary`、`detail` 和到期时间，然后在当前对话里等用户对这一次明确允许或拒绝。最初那句需求、工具的建议、通知里的文字、以前的批准，都不能当成这一次的允许。Bot 不自行批准。默认最多等 6 小时，到期按拒绝处理。
+- 多行需求写入 UTF-8 文件，用 `--prompt-file` 传递。Machine Shell 支持独立 stdin 时，也可以从 stdin 传入。不要把用户原文拼进 shell 命令。
+- 工作目录只能是 `~/www` 下已经存在的项目目录，不能是 `~/www` 本身。
+- `skills/ferry/` 和 `skills/wake-on-done/` 保持完整，含 references 和 scripts。只留 SKILL.md 不算装好。
+- 聊天记录和长期记忆里不存放 webhook 密钥、API key，或其他 Bot 的 owner id。run_id 和 prompt 原文也不要写进长期记忆。
+- wake-on-done 中继是共用的。每个写程序的 Bot 在自己的 `ferry run` 上仍使用自己的 owner id，通知才会回到这个 Bot。
+- 聊天入口是 Grok Bot。`ferry --agent grok` 指 Mac 上的 Grok Build 命令行，不是这个聊天 Bot。
+- 云端 Claude Code（ccx）和云端 Pi（pix）不走这条通道。ferry 只负责 Mac 上已安装的 Claude Code、Codex、Grok Build、Pi、Kimi。
+- 合盖、睡眠、断网或关机时，正在跑的任务和通知都会停。ferry 只能在办得到的时候阻止空闲睡眠。
+- 想让路由稳定，优先用一个专门负责编程的 Bot。别的 Bot 若也要在 Mac 上写程序，必须自己装好 ferry 和 wake-on-done。长期规则若只能记在当前 Bot 上，要说明只对这个 Bot 生效。
+- 安装完成后，在新对话里用一句短的“在我的 Mac 上写一个 Hello World”，再说“继续”，验收自动路由和续接。还没实测的项标成未验证。
 
-把下面这段话发给 Bot：
+## 做到一半，也能继续
 
-> 请安装并配置 ferry：
-> https://github.com/terranc/agent-ferry/tree/master/skills/ferry
->
-> 按安装引导把我的 Mac 接入，配置好完成通知，并记住：以后我让你在 Mac 上用 Claude Code、Codex、Grok、Pi 或 Kimi 写程序、修 bug 或继续任务时，都通过 ferry 执行。
->
-> 配置完成后，帮我写并运行一个 Hello World，确认结果能回到当前对话。
-
-Bot 会引导你完成必要的确认。安装完成后，直接像上面的例子一样说需求即可，不用每次提 ferry，也不用记命令。
-
-## 做到一半，也能继续聊
-
-- **接着改**：说“继续刚才的任务”，沿用之前的对话。
-- **换个模型**：说“这次用 sonnet”或“这次用 opus”。
-- **选择工具**：说“用 Codex 做这个任务”或“用 Pi Agent 写这个程序”。不同工具的会话分开保存，不能把一个工具的会话交给另一个续接。
+- **接着改**：说“继续刚才的任务”，沿用原来的工具和会话。
+- **换模型**：说“这次用 sonnet”或“这次用 opus”。模型只作用于当前选中的工具。
+- **换工具**：说“用 Codex 做这个任务”或“用 Pi Agent 写这个程序”。会话按工具分开保存，不能把一个工具的会话交给另一个续接。
 - **取消任务**：告诉 Bot 停止当前任务。
 - **回到电脑前接手**：让 Bot 给你打开同一个工具会话的命令。
 
-同一个任务需要等上一轮结束后再追加发言。遇到需要审批的操作，Bot 应先把操作内容告诉你，等你明确允许或拒绝。不同工具可能询问得更频繁，不能为减少询问而自动批准。
+同一个会话要等上一轮结束后再追加。遇到需要审批的操作，Bot 先把这一次的操作讲清楚，等你明确允许或拒绝。不同工具询问的频率不同，不能为了少问而自动批准。
 
 ## 使用前了解一下
 
 目前支持 macOS。执行期间，Mac 需要保持开机和联网；合盖或断电会影响任务与通知。所选工具的使用仍受你现有账户的额度或计费规则约束。
 
-项目仍在早期测试中。五种工具都已通过本机真实启动、续聊和拒绝越界写入测试；Grok Bot 自动回传和跨对话调用仍需联调。请先用一个独立的小项目试用。
+项目仍在早期测试中。五种工具都已通过本机真实启动、续聊和拒绝越界写入测试；Grok Bot 的完成/审批回传、新对话自动选中 ferry 和跨对话续接仍需联调。请先用一个独立的小项目试用。没跑通的项保持未验证。
 
 <details>
 <summary>手动安装、命令行与开发测试</summary>
+
+第一次接入用上面的「快速接入」。这里是同一套安装的手动命令、常用 CLI 和开发测试。
 
 本机需要 Python 3.9+；使用 Grok Build 时需要 Python 3.11+。已验证的版本：Claude Code 2.1.310、Codex 0.164.0、Grok Build 1.0.70、Pi Agent 1.4.0、Kimi Code 2.1.1。新增工具的更旧版本会被拒绝。在下载的项目目录中执行：
 
