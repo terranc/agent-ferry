@@ -1,4 +1,4 @@
-# ferry
+# Agent Ferry
 
 对 Grok Bot 说一句话，让你 Mac 上的编程助手帮你写程序。
 
