@@ -33,13 +33,13 @@ Mac 上的这五种工具统一由 ferry 管理：不要悄悄改成直接运行
 
 ## 发起一轮
 
-先运行 `~/.local/bin/ferry doctor --agent <所选工具>`。`--agent all` 检查全部；未安装但未被用户选择的工具不阻止其他工具使用。工作目录必须是 `~/www` 下真实存在的项目目录，不能是 `~/www` 自身。
+先运行 `~/.local/bin/ferry doctor --agent <所选工具>`。`--agent all` 检查全部；未安装但未被用户选择的工具不阻止其他工具使用。工作目录必须是 ferry 配置的工作区根目录下真实存在的项目目录，不能是工作区根目录本身。当前根目录用 `ferry doctor` 查看。
 把 prompt 写入本机 UTF-8 文件，用文件参数传递多行、引号、美元符号和反引号；不要把用户输入拼进 shell 命令。
 Machine Shell 如果支持独立 stdin，也可以把 prompt 经 stdin 传入。
 用户指定模型时加 `--model '<原生模型别名或完整 ID>'`；Claude 可用 sonnet/opus，其他工具按自身模型列表填写。续接也可以指定本轮模型。省略时由该工具自行选择，ferry 不增加默认模型或自动回退。
 
 ```sh
-~/.local/bin/ferry run --owner '<当前 Bot 的 owner id>' --cwd '/Users/用户名/www/项目' --prompt-file '/tmp/ferry-prompt.txt'
+~/.local/bin/ferry run --owner '<当前 Bot 的 owner id>' --cwd '<工作区根目录下的项目路径>' --prompt-file '/tmp/ferry-prompt.txt'
 ```
 
 命令会快速返回一个 JSON 对象。保存 `agent`、`run_id` 和原生 `session_id`，告诉用户已经启动。新后端的 session_id 可能暂为 null，此时用 run_id 查询 status，待原生 ID 就绪再保存，不编造 ID。
@@ -90,7 +90,7 @@ Machine Shell 如果支持独立 stdin，也可以把 prompt 经 stdin 传入。
 ## 续接、取消和本机接手
 
 ```sh
-~/.local/bin/ferry run --owner '<当前 Bot 的 owner id>' --cwd '/Users/用户名/www/项目' --agent '<原工具>' --session '<session_id>' --prompt-file '/tmp/ferry-next.txt'
+~/.local/bin/ferry run --owner '<当前 Bot 的 owner id>' --cwd '<工作区根目录下的项目路径>' --agent '<原工具>' --session '<session_id>' --prompt-file '/tmp/ferry-next.txt'
 ~/.local/bin/ferry cancel '<run_id>'
 ~/.local/bin/ferry sessions
 ```

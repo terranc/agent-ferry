@@ -1,62 +1,62 @@
-# ferry
+# Agent Ferry
 
 对 Grok Bot 说一句话，让你 Mac 上的编程助手帮你写程序。
 
 可以选择 **Claude Code、Codex、Grok Build、Pi Agent、Kimi Code**。你在聊天里提出需求，所选工具在自己的 Mac 上干活；完成后由 Bot 把结果带回同一段对话。想再改一点，就接着说，不用重新解释整个项目。
 
-## 可以这样用
+## 快速接入
 
-> 在我的 Mac 上，用 Claude Code 写一个 Hello World 程序，运行一下，完成后告诉我。
+先准备好：Mac 已接到 Grok Bot，并能执行命令（本机执行 / Machine Shell）；至少一种编程工具已安装并登录。项目放在工作区根目录下已有的文件夹里。
+
+用你现在的 Grok Bot，或单独用一个专门跑这条通道的 Bot。把仓库里的 [ferry skill](skills/ferry/SKILL.md) 交给它，让它按 [安装引导](skills/ferry/references/setup.md) 配置。也可以只发一句：
+
+> 请按 https://github.com/terranc/agent-ferry 的 skills/ferry 安装引导接入。
+
+装好后直接说需求即可，不必每次提到 ferry。本仓库没有公开模板地址。
+
+## 日常怎么说
+
+> 在我的 Mac 上，用 Claude Code 看看这个项目为什么启动不了。
 
 > 继续刚才的任务，把输出改成中文。
 
-> 这次用 Codex，帮我给这个程序加几个测试。
+> 这次用 Codex，帮我补几个测试。
 
-> 用 Kimi Code 帮我做一个简单的待办清单。
+> 这次用 opus。
 
-> 这次用 opus，帮我看看这个项目为什么启动不了。
+未指定工具时默认 Claude Code。“继续”沿用上次的工具和会话。“opus”只换模型。
 
-ferry 帮你连接 Grok Bot 和这些本机工具，使用电脑上已有的登录。未指定工具时默认 Claude Code，继续任务时沿用上次的工具。
+## Grok Bot 接入最佳实践
 
-## 开始使用
+命令以 [ferry skill](skills/ferry/SKILL.md) 为准。
 
-先准备好：
+- `ferry run` 外面不要再包 `notify-run`、`nohup` 或 `&`。后台和通知由 ferry 接 wake-on-done。
+- 返回里 `notify` 为 `none` 时，说明通知不可用，并改查 `ferry status`。
+- 审批给出 `approval_id`、路径或命令、`summary`、`detail` 和到期时间，等当前对话里对这一次明确允许或拒绝。Bot 不自行批准。默认最多等 6 小时，到期按拒绝。
+- 多行需求写入 UTF-8 文件，用 `--prompt-file` 或 stdin 传入，不要拼进 shell。
+- 聊天记录和长期记忆里不存 webhook 密钥、API key，或其他 Bot 的 owner id。
+- 聊天里的 Grok Bot 不是 `ferry --agent grok`。后者是 Mac 上的 Grok Build。云端 Claude Code（ccx）和云端 Pi（pix）不走 ferry。
 
-- 一台能被 Grok Bot 访问的 Mac。
-- Mac 上已经安装并登录你想用的编程工具，不需要五种都安装。
-- 一个你平时使用的 Grok Bot。
+## 做到一半，也能继续
 
-把下面这段话发给 Bot：
+- **接着改**：说“继续刚才的任务”。
+- **换模型**：说“这次用 sonnet”或“这次用 opus”。
+- **换工具**：说“用 Codex 做这个任务”或“用 Pi Agent 写这个程序”。会话不能交给另一个工具续接。
+- **取消**：告诉 Bot 停止当前任务。
+- **回到电脑前接手**：让 Bot 给出打开同一个工具会话的命令。
 
-> 请安装并配置 ferry：
-> https://github.com/terranc/agent-ferry/tree/master/skills/ferry
->
-> 按安装引导把我的 Mac 接入，配置好完成通知，并记住：以后我让你在 Mac 上用 Claude Code、Codex、Grok、Pi 或 Kimi 写程序、修 bug 或继续任务时，都通过 ferry 执行。
->
-> 配置完成后，帮我写并运行一个 Hello World，确认结果能回到当前对话。
-
-Bot 会引导你完成必要的确认。安装完成后，直接像上面的例子一样说需求即可，不用每次提 ferry，也不用记命令。
-
-## 做到一半，也能继续聊
-
-- **接着改**：说“继续刚才的任务”，沿用之前的对话。
-- **换个模型**：说“这次用 sonnet”或“这次用 opus”。
-- **选择工具**：说“用 Codex 做这个任务”或“用 Pi Agent 写这个程序”。不同工具的会话分开保存，不能把一个工具的会话交给另一个续接。
-- **取消任务**：告诉 Bot 停止当前任务。
-- **回到电脑前接手**：让 Bot 给你打开同一个工具会话的命令。
-
-同一个任务需要等上一轮结束后再追加发言。遇到需要审批的操作，Bot 应先把操作内容告诉你，等你明确允许或拒绝。不同工具可能询问得更频繁，不能为减少询问而自动批准。
+同一会话等上一轮结束再追加。需要审批时，按上一节对这一次单独确认。
 
 ## 使用前了解一下
 
-目前支持 macOS。执行期间，Mac 需要保持开机和联网；合盖或断电会影响任务与通知。所选工具的使用仍受你现有账户的额度或计费规则约束。
+目前支持 macOS。执行期间 Mac 需要开机、联网；合盖、睡眠或断网会停掉任务和通知。ferry 只能在办得到的时候阻止空闲睡眠。所选工具仍按你现有账户的额度或计费规则计算。
 
-项目仍在早期测试中。五种工具都已通过本机真实启动、续聊和拒绝越界写入测试；Grok Bot 自动回传和跨对话调用仍需联调。请先用一个独立的小项目试用。
+项目仍在早期测试中。五种工具都已通过本机真实启动、续聊和拒绝越界写入测试。Grok Bot 的完成/审批回传、新对话自动选中和跨对话续接仍需联调。
 
 <details>
 <summary>手动安装、命令行与开发测试</summary>
 
-本机需要 Python 3.9+；使用 Grok Build 时需要 Python 3.11+。已验证的版本：Claude Code 2.1.310、Codex 0.164.0、Grok Build 1.0.70、Pi Agent 1.4.0、Kimi Code 2.1.1。新增工具的更旧版本会被拒绝。在下载的项目目录中执行：
+本机需要 Python 3.9+；使用 Grok Build 时需要 Python 3.11+。已验证的版本：Claude Code 2.1.310、Codex 0.164.0、Grok Build 1.0.70、Pi Agent 1.4.0、Kimi Code 2.1.1。新增工具的更旧版本会被拒绝。在克隆下来的仓库目录中执行：
 
 ```sh
 ./install.sh
@@ -64,22 +64,20 @@ Bot 会引导你完成必要的确认。安装完成后，直接像上面的例�
 ~/.local/bin/ferry doctor --agent all
 ```
 
-Bot 安装时需要本仓库的 `skills/ferry/` 和 `skills/wake-on-done/` 两个完整目录。具体步骤见 [安装引导](skills/ferry/references/setup.md)，日常调用见 [ferry skill](skills/ferry/SKILL.md)。
-
 也可以直接在终端发起任务：
 
 ```sh
-printf '%s\n' '写一个 Hello World 并运行验证。' |
-  ~/.local/bin/ferry run --owner local-test --cwd "$HOME/www/测试项目" --model sonnet
+printf '%s\n' '<这一轮要做的事>' |
+  ~/.local/bin/ferry run --owner local-test --cwd "$HOME/<你的工作区>/<你的项目>" --model sonnet
 
 ~/.local/bin/ferry status '<run_id>' --full
 ~/.local/bin/ferry sessions
 ```
 
-工作目录必须是 `~/www` 下已经存在的项目目录。续接时给 `run` 加上 `--session '<session_id>'`。通知尚未配置时，通过 `status` 查询结果。
-选择工具时加 `--agent claude|codex|grok|pi|kimi`；模型参数按所选工具填写。新工具的会话 ID 可能稍后才生成，先保存 run_id，再用 status 查询；不要在不同工具间混用 session_id。
+`<你的工作区>` 是配置里的工作区根目录，`<你的项目>` 是它下面已经存在的项目文件夹。不能把根目录本身当成工作目录。默认根目录可以改：未设置 `XDG_CONFIG_HOME` 时，编辑 `~/.config/agent-ferry/config.json` 的 `workspace_root`。当前值用 `ferry doctor` 看。续接时加上 `--session '<session_id>'`。通知尚未配置时，用 `status` 查询。
+选择工具时加 `--agent claude|codex|grok|pi|kimi`。模型参数按所选工具填写。新工具的会话 ID 可能稍后才有，先留 run_id。不要混用不同工具的 session_id。
 
-Grok Build 每轮使用独立审批配置，保留原生登录和会话，不修改用户配置。已有 `~/.grok/requirements.toml` 时会拒绝启动，需先检查策略兼容性；不要为通过检查删除原有策略。
+Grok Build 每轮使用独立审批配置，不改用户配置。已有 `~/.grok/requirements.toml` 时会拒绝启动，需先看策略是否兼容，不要为了通过检查删掉原策略。
 
 卸载：
 
