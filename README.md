@@ -6,20 +6,13 @@
 
 ## 快速接入
 
-先准备好：Mac 已接到 Grok Bot，并能执行命令（本机执行 / Machine Shell）；至少一种编程工具已安装并登录。项目放在工作区根目录下已有的文件夹里，不要用根目录本身。根目录可以改，当前值用 `ferry doctor` 看，配置见文末命令行。
+先准备好：Mac 已接到 Grok Bot，并能执行命令（本机执行 / Machine Shell）；至少一种编程工具已安装并登录。项目放在工作区根目录下已有的文件夹里。
 
-用你现在的 Grok Bot，或单独用一个专门跑这条通道的 Bot（自行创建，或使用已有的同类 Bot）。本仓库没有公开模板地址。把下面这段话发给负责安装的那个 Bot。细节见 [安装引导](skills/ferry/references/setup.md)，日常调用见 [ferry skill](skills/ferry/SKILL.md)。
+用你现在的 Grok Bot，或单独用一个专门跑这条通道的 Bot。把仓库里的 [ferry skill](skills/ferry/SKILL.md) 交给它，让它按 [安装引导](skills/ferry/references/setup.md) 配置。也可以只发一句：
 
-> 请安装并配置 ferry。只保存 SKILL.md 不算装好。
-> 仓库：https://github.com/terranc/agent-ferry
->
-> 把 `skills/ferry/` 和 `skills/wake-on-done/` 两个完整目录装进当前 Bot，references 和 scripts 都要在，脚本保持可执行。
-> 在已连接的 Mac 上任选目录，克隆或更新本仓库（例如 `~/agent-ferry`）。目录里已有内容时先核对来源，不要覆盖或强制重置。然后运行 `./install.sh` 和 `~/.local/bin/ferry doctor`。
-> 配好 wake-on-done 中继，让完成和审批通知唤醒当前这个 Bot。每一轮 `--owner` 用当前 Bot 自己的 id，不用中继的 id，也不用显示名。
-> 把长期路由记下来并读回核对：以后我在这台 Mac 上用 Claude Code、Codex、Grok Build、Pi 或 Kimi 写程序、修 bug 或继续任务时，自动通过 ferry 执行。我不用说 ferry。未指定工具时默认 Claude Code；继续时沿用原来的工具和会话，不能混用。
-> 分别说明命令行、完成通知、长期路由、审批通知是否已经验证。没跑通的标成未验证。
+> 请按 https://github.com/terranc/agent-ferry 的 skills/ferry 安装引导接入。
 
-装好后直接说需求即可，不必每次提到 ferry。想试一句可以换一个新对话，这不是必做步骤。
+装好后直接说需求即可，不必每次提到 ferry。本仓库没有公开模板地址。
 
 ## 日常怎么说
 
