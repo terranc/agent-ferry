@@ -1,6 +1,7 @@
 """Configuration, private state files, and short state transactions."""
 import contextlib
 import fcntl
+import hashlib
 import json
 import math
 import os
@@ -15,11 +16,14 @@ import time
 
 
 TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
+AGENTS = ("claude", "codex", "grok", "pi", "kimi")
 DEFAULTS = {
     "workspace_root": "~/www", "approval_timeout_seconds": 21600,
     "retention_days": 7, "result_max_chars": 4000, "claude_bin": "claude",
     "notify_run_bin": "~/.local/bin/notify-run", "caffeinate_bin": "/usr/bin/caffeinate",
     "poll_interval_seconds": 2,
+    "codex_bin": "codex", "grok_bin": "grok", "pi_bin": "pi", "kimi_bin": "kimi",
+    "agent_start_timeout_seconds": 60,
 }
 ASK_RULES = [
     "Bash(git push*)", "Bash(sudo *)", "Bash(npm install -g *)", "Bash(npm i -g *)",
@@ -84,6 +88,28 @@ def process_matches(pid, *tokens):
     except ValueError:
         return False
     return any(argv[i:i + len(tokens)] == list(tokens) for i in range(len(argv)))
+
+
+def process_birth(pid):
+    if not isinstance(pid, int) or pid <= 1:
+        return None
+    result = subprocess.run(["ps", "-p", str(pid), "-o", "stat=", "-o", "lstart="],
+                            capture_output=True, text=True, timeout=3)
+    parts = result.stdout.strip().split(maxsplit=1)
+    return parts[1] if result.returncode == 0 and len(parts) == 2 and not parts[0].startswith("Z") else None
+
+
+def signal_group(pgid, sig):
+    try:
+        os.killpg(pgid, sig)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        # macOS may return EPERM, rather than ESRCH, for an already empty group.
+        groups = subprocess.run(["ps", "-axo", "pgid=,stat="], capture_output=True, text=True, timeout=3)
+        if groups.returncode or any(parts[0] == str(pgid) and not parts[1].startswith("Z")
+                                    for line in groups.stdout.splitlines() if len(parts := line.split()) == 2):
+            raise
 
 
 class Store:
@@ -170,19 +196,63 @@ class Store:
             return False
 
     def pending(self, run_id=None):
-        return [r for r in self.requests(run_id)
+        return [{k: v for k, v in r.items() if k != "native_request"} for r in self.requests(run_id)
                 if not self.decision_path(r["approval_id"]).exists()
                 and r["expires_at"] > time.time()
-                and process_matches(r["hook_pid"], "hook-permission")]
+                and self.request_alive(r)]
+
+    def request_alive(self, request):
+        command = request.get("requester", "hook-permission")
+        if command == "_exec":
+            return process_matches(request["hook_pid"], "_exec", request["run_id"])
+        return command in ("hook-permission", "hook-tool") and process_matches(request["hook_pid"], command)
 
     def finish_approvals(self, run_id, decision):
         for request in self.requests(run_id):
             self.decide(request, decision)
 
     def release(self, meta):
-        lock = self.sessions / f'{meta["session_id"]}.lock'
+        if not meta.get("session_id"):
+            return
+        lock = self.session_lock(meta.get("agent", "claude"), meta["session_id"])
         if lock.exists() and lock.read_text() == meta["run_id"]:
             lock.unlink()
+
+    def session_lock(self, agent, session_id):
+        if agent == "claude":
+            return self.sessions / f"{session_id}.lock"
+        return self.sessions / f'{agent}_{hashlib.sha256(session_id.encode()).hexdigest()}.lock'
+
+    def bind_session(self, run_id, session_id):
+        # Called by a protocol worker after the native tool allocates its ID.
+        if not isinstance(session_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,160}", session_id):
+            raise FerryError("PROTOCOL_ERROR", "Agent returned an invalid session id")
+        with self.transaction():
+            meta = self.meta(run_id)
+            if meta["status"] in TERMINAL or meta.get("cancel_requested"):
+                raise FerryError("RUN_NOT_ACTIVE", "Run was cancelled during agent startup")
+            if meta.get("session_id") and meta["session_id"] != session_id:
+                raise FerryError("PROTOCOL_ERROR", "Agent resumed a different session")
+            lock = self.session_lock(meta.get("agent", "claude"), session_id)
+            if lock.exists() and lock.read_text() != run_id:
+                previous = self.reconcile(self.meta(lock.read_text()))
+                if previous["status"] not in TERMINAL:
+                    raise FerryError("SESSION_BUSY", "Native session already has an active run")
+                lock.unlink(missing_ok=True)
+            if not lock.exists():
+                fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, "w") as stream:
+                    stream.write(run_id)
+            meta["session_id"] = session_id
+            self.save(meta)
+        return session_id
+
+    def child_alive(self, meta):
+        if meta.get("agent_birth"):
+            return process_birth(meta.get("agent_pid")) == meta["agent_birth"]
+        pid = meta.get("claude_pid")
+        sid = meta.get("session_id")
+        return bool(sid and (process_matches(pid, "--session-id", sid) or process_matches(pid, "--resume", sid)))
 
     def alive(self, meta):
         if meta.get("worker_pid"):
@@ -193,13 +263,9 @@ class Store:
     def reconcile(self, meta):
         if meta["status"] not in TERMINAL and not self.alive(meta):
             # A killed worker must not leave Claude editing the same session after lock recovery.
-            child_pid = meta.get("claude_pid")
-            if child_pid and (process_matches(child_pid, "--session-id", meta["session_id"])
-                              or process_matches(child_pid, "--resume", meta["session_id"])):
-                try:
-                    os.killpg(child_pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+            child_pid = meta.get("agent_pid", meta.get("claude_pid"))
+            if self.child_alive(meta):
+                signal_group(child_pid, signal.SIGKILL)
             meta.update(status="interrupted", ended_at=time.time())
             self.save(meta)
             self.finish_approvals(meta["run_id"], "interrupted")
@@ -207,7 +273,11 @@ class Store:
         return meta
 
     def resume_cmd(self, meta):
-        return f'cd {shlex.quote(meta["cwd"])} && claude --resume {shlex.quote(meta["session_id"])}'
+        if not meta.get("session_id"):
+            return None
+        agent = meta.get("agent", "claude")
+        option = {"claude": "--resume", "codex": "resume", "grok": "--resume", "pi": "--session", "kimi": "--session"}[agent]
+        return f'cd {shlex.quote(meta["cwd"])} && {agent} {option} {shlex.quote(meta["session_id"])}'
 
     def settings(self):
         return {

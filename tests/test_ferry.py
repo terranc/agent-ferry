@@ -27,7 +27,7 @@ REPO = Path(__file__).resolve().parents[1]
 ENTRY = REPO / "bin/ferry"
 
 
-class FerryTest(unittest.TestCase):
+class FixtureCase(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="ferry-tests-")
         self.home = Path(self.temp.name).resolve()
@@ -54,7 +54,7 @@ class FerryTest(unittest.TestCase):
         # Always stop owned test descendants, including intentionally killed workers.
         for path in self.state.glob("runs/*/meta.json"):
             meta = read_json(path)
-            for key in ("claude_pid", "pgid"):
+            for key in ("agent_pid", "claude_pid", "pgid"):
                 pid = meta.get(key)
                 if pid:
                     try:
@@ -148,6 +148,7 @@ class FerryTest(unittest.TestCase):
             thread.join()
             server.server_close()
 
+class FerryTest(FixtureCase):
     def test_cwd_rejections_do_not_start_claude(self):
         outside = self.home / "outside"
         outside.mkdir()

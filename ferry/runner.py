@@ -7,34 +7,34 @@ import subprocess
 import time
 import uuid
 
-from .core import FerryError, TERMINAL, executable, one_line, process_matches, read_json
+from .core import FerryError, TERMINAL, executable, one_line, process_birth, read_json
+from .core import signal_group as kill_group
 from .notify import relay_config, send
+from . import agents
+from .protocols import execute_protocol
 
 
-def launch(store, cwd, prompt, session_id, owner, model=None):
+def launch(store, cwd, prompt, session_id, owner, model=None, agent="claude"):
     root = Path(store.config["workspace_root"]).expanduser().resolve()
     cwd = Path(cwd).expanduser().resolve()
     if cwd == root or root not in cwd.parents or not cwd.is_dir():
         raise FerryError("INVALID_CWD", f"cwd must be an existing directory strictly below {root}")
     new_session = session_id is None
-    try:
-        session_id = str(uuid.UUID(session_id)) if session_id is not None else str(uuid.uuid4())
-    except ValueError:
-        raise FerryError("INVALID_SESSION_ID", "session must be a UUID") from None
+    session_id = agents.session_id(agent, session_id)
     if not prompt.strip():
         raise FerryError("EMPTY_PROMPT", "Prompt must not be empty")
     if not owner.strip():
         raise FerryError("INVALID_ARGUMENT", "owner must not be empty")
     if model is not None and not model.strip():
         raise FerryError("INVALID_ARGUMENT", "model must not be empty")
-    if not executable(store.config["claude_bin"]):
-        raise FerryError("CLAUDE_NOT_FOUND", "Claude Code executable not found")
+    if not executable(store.config[f"{agent}_bin"]):
+        raise FerryError("CLAUDE_NOT_FOUND" if agent == "claude" else "AGENT_NOT_FOUND", f"{agent} executable not found")
     run_id = "r_" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S_") + uuid.uuid4().hex[:12]
     notify = bool(executable(store.config["notify_run_bin"]) and relay_config(store))
     with store.transaction():
         store.cleanup()
-        lock = store.sessions / f"{session_id}.lock"
-        if lock.exists():
+        lock = store.session_lock(agent, session_id) if session_id else None
+        if lock and lock.exists():
             try:
                 previous = store.reconcile(store.meta(lock.read_text()))
                 if previous["status"] not in TERMINAL:
@@ -43,16 +43,18 @@ def launch(store, cwd, prompt, session_id, owner, model=None):
                 if exc.code != "NOT_FOUND":
                     raise
             lock.unlink(missing_ok=True)
-        fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w") as stream:
-            stream.write(run_id)
+        if lock:
+            fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w") as stream:
+                stream.write(run_id)
         meta = {"run_id": run_id, "session_id": session_id, "new_session": new_session,
-                "cwd": str(cwd), "owner": owner, "prompt": prompt, "model": model, "created_at": time.time(),
+                "cwd": str(cwd), "owner": owner, "prompt": prompt, "model": model, "agent": agent, "created_at": time.time(),
                 "started_at": None, "ended_at": None, "status": "starting", "notify": notify}
         try:
             store.run_dir(run_id).mkdir(mode=0o700)
             store.save(meta)
-            store.render()
+            if agent == "claude":
+                store.render()
             argv = [str(store.entry), "_exec", run_id]
             if notify:
                 argv = [executable(store.config["notify_run_bin"]), "--owner", owner,
@@ -67,7 +69,7 @@ def launch(store, cwd, prompt, session_id, owner, model=None):
             store.save(meta)
             store.release(meta)
             raise
-    result = {"run_id": run_id, "session_id": session_id, "new_session": new_session,
+    result = {"run_id": run_id, "session_id": session_id, "new_session": new_session, "agent": agent,
               "status": "starting", "notify": "wake-on-done" if notify else "none",
               "next": f"收到 ferry:{run_id} 通知后执行 ferry status {run_id}"}
     if not notify:
@@ -76,21 +78,15 @@ def launch(store, cwd, prompt, session_id, owner, model=None):
     deadline = time.monotonic() + 1
     while time.monotonic() < deadline:
         current = store.meta(run_id)
-        if current.get("claude_pid") or current["status"] in TERMINAL:
+        if current.get("agent_pid") or current.get("claude_pid") or current["status"] in TERMINAL:
             break
         time.sleep(0.01)
+    result["session_id"] = store.meta(run_id).get("session_id")
     return result
 
 
 class Cancelled(Exception):
     pass
-
-
-def kill_group(pgid, sig):
-    try:
-        os.killpg(pgid, sig)
-    except ProcessLookupError:
-        pass
 
 
 def stop_child(child):
@@ -122,40 +118,49 @@ def execute(store, run_id):
 
     signal.signal(signal.SIGTERM, cancelled)
     try:
+        meta = store.meta(run_id)
+        agents.check_version(store, meta.get("agent", "claude"))
+        agent_env = agents.environment(store, meta)
         with store.transaction():
             meta = store.meta(run_id)
             if meta.get("cancel_requested") or meta["status"] in TERMINAL:
                 raise Cancelled()
             meta.update(status="running", started_at=time.time(), worker_pid=os.getpid())
             store.save(meta)
-            argv = [executable(store.config["claude_bin"]), "-p", "--output-format", "json",
-                    "--permission-mode", "acceptEdits", "--settings", str(store.config_dir / "claude-settings.json"),
-                    "--disallowedTools", "AskUserQuestion",
-                    "--session-id" if meta["new_session"] else "--resume", meta["session_id"]]
-            if meta.get("model") is not None:
-                argv += ["--model", meta["model"]]
-            env = {**os.environ, "FERRY_RUN_ID": run_id}
+            agent = meta.get("agent", "claude")
+            argv = agents.argv(store, meta)
+            env = {**os.environ, "FERRY_RUN_ID": run_id, "FERRY_ENTRY": str(store.entry)}
+            env.update(agent_env)
             directory = store.run_dir(run_id)
-            out_fd = os.open(directory / "claude.json", os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
-            err_fd = os.open(directory / "claude.stderr.log", os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+            out_fd = os.open(directory / ("claude.json" if agent == "claude" else "agent.jsonl"), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+            err_fd = os.open(directory / f"{agent}.stderr.log", os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
             with os.fdopen(out_fd, "wb") as stdout, os.fdopen(err_fd, "wb") as stderr:
                 child = subprocess.Popen(argv, cwd=meta["cwd"], env=env, stdin=subprocess.PIPE,
-                                         stdout=stdout, stderr=stderr, start_new_session=True)
-            meta["claude_pid"] = child.pid
+                                         stdout=stdout if agent == "claude" else subprocess.PIPE, stderr=stderr, start_new_session=True)
+            meta.update(agent_pid=child.pid, agent_birth=process_birth(child.pid))
+            if agent == "claude":
+                meta["claude_pid"] = child.pid
             store.save(meta)
         caffeine_bin = executable(store.config["caffeinate_bin"])
         if caffeine_bin:
             caffeine = subprocess.Popen([caffeine_bin, "-i", "-w", str(child.pid)],
                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        child.communicate(meta["prompt"].encode("utf-8"))
-        candidate = read_json(directory / "claude.json")
+        if agent == "claude":
+            child.communicate(meta["prompt"].encode("utf-8"))
+            candidate = read_json(directory / "claude.json")
+        else:
+            with (directory / "agent.jsonl").open("ab") as log:
+                candidate = execute_protocol(child, store, meta, log)
+            meta = store.meta(run_id)
         if (not isinstance(candidate, dict) or not isinstance(candidate.get("result"), str)
                 or candidate.get("session_id") != meta["session_id"]):
             raise ValueError("Invalid Claude JSON result or session_id")
         output = candidate
         status = "completed" if child.returncode == 0 and not output.get("is_error") else "failed"
+        if agent != "claude" and output.get("cancelled") is True:
+            status = "cancelled"
         if status == "failed":
-            error = f"Claude exited {child.returncode}; is_error={output.get('is_error')}"
+            error = f"{agent} exited {child.returncode}; is_error={output.get('is_error')}"
     except Cancelled:
         status = "cancelled"
     except Exception as exc:
@@ -172,19 +177,23 @@ def execute(store, run_id):
             # Let a waiting hook return its deny before stopping Claude and its process group.
             deadline = time.monotonic() + min(store.config["poll_interval_seconds"] + 0.2, 2.2)
             while time.monotonic() < deadline and any(
-                    process_matches(r["hook_pid"], "hook-permission") for r in hooks):
+                    r.get("requester", "hook-permission") != "_exec" and store.request_alive(r) for r in hooks):
                 time.sleep(0.03)
         if status != "completed":
             stop_child(child)
         if caffeine:
-            caffeine.terminate()
-            caffeine.wait()
+            try:
+                caffeine.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                caffeine.terminate()
+                caffeine.wait()
         if meta:
+            agents.cleanup_environment(store, meta)
             with store.transaction():
                 meta = store.meta(run_id)
                 if meta.get("cancel_requested") or meta["status"] == "cancelled":
                     status = "cancelled"
-                stderr_path = store.run_dir(run_id) / "claude.stderr.log"
+                stderr_path = store.run_dir(run_id) / f'{meta.get("agent", "claude")}.stderr.log'
                 stderr_tail = ""
                 if stderr_path.exists() and status == "failed":
                     with stderr_path.open("rb") as stream:
@@ -220,9 +229,8 @@ def cancel(store, run_id):
         current = store.meta(run_id)
         if current["status"] not in TERMINAL:
             # Worker did not complete cleanup (e.g. child ignores TERM).
-            child_pid = current.get("claude_pid")
-            if child_pid and (process_matches(child_pid, "--session-id", current["session_id"])
-                              or process_matches(child_pid, "--resume", current["session_id"])):
+            child_pid = current.get("agent_pid", current.get("claude_pid"))
+            if store.child_alive(current):
                 kill_group(child_pid, signal.SIGKILL)
             if store.alive(current):
                 kill_group(current["pgid"], signal.SIGKILL)

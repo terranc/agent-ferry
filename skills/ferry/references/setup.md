@@ -13,11 +13,13 @@
 
 ## 2. 检查 Mac 上的 ferry
 
-在目标 Mac 执行 `~/.local/bin/ferry doctor`。已有 CLI 时先复用；需要安装或升级时，检查本机项目目录（通常是 `~/www/agent-ferry`），在该仓库运行 `./install.sh`，然后重新检查。
+在目标 Mac 执行 `~/.local/bin/ferry doctor --agent all` 查看已安装工具。按用户选择检查 claude/codex/grok/pi/kimi；未选择的工具缺失不阻止其他工具使用。默认使用 Claude Code，用户指定其他工具时保留选择。已有 ferry CLI 时先复用；需要安装或升级时，检查本机项目目录（通常是 `~/www/agent-ferry`），在该仓库运行 `./install.sh`，然后重新检查。
 
 不要把在线 Bot skill 库里的文件路径直接当成 Mac 路径。本仓库地址为 `https://github.com/terranc/agent-ferry.git`；本机没有源码时，可通过 Machine Shell 克隆到 `~/www/agent-ferry` 后运行安装。若该目录已有内容，先核对来源与当前改动，不覆盖或强制重置；确实无法判断源码位置时再询问用户。
 
-逐项报告 doctor 结果。Claude/python/workspace/caffeinate 缺失时解决对应前置条件；用户 settings 有审批冲突时展示警告并说明影响，不擅自改用户 settings。
+逐项报告 doctor 结果。所选编程工具/python/workspace/caffeinate 缺失时解决对应前置条件；用户配置有审批冲突时展示警告并说明影响，不擅自改用户设置。
+
+基础运行需要 Python 3.9+，Grok Build 接入需要 Python 3.11+。已验证版本为 Claude Code 2.1.310、Codex 0.164.0、Grok Build 1.0.70、Pi Agent 1.4.0、Kimi Code 2.1.1；新增后端会拒绝更旧版本。Grok 的每轮独立审批配置不修改用户 config.toml；存在用户 requirements.toml 时会拒绝运行，需先评估策略兼容性，不能擅自删除原策略。
 
 完成标准：ferry CLI 在目标 Mac 可执行，基础环境检查通过，已告知任何权限配置冲突。
 
@@ -35,9 +37,9 @@
 
 用平台提供的用户长期记忆能力保存下面这条规则（支持时使用 `UpdateMemory` 的 user/profile），并读回核实。已有等价规则时更新或复用，保留其他无关偏好。
 
-> 在已配置 ferry 的 Mac 上，用户要求用 Claude Code 写程序、修 bug 或继续任务时，自动加载 ferry skill 并通过 ferry 执行，用户无需提及 ferry。每轮 owner 使用当前 Bot 自己的 ID。ferry 自带 wake-on-done 通知，不再外包 notify-run。每个风险操作都先征求用户对本次审批的明确答复，Bot 不自行批准。用户明确指定其他方式时遵从用户选择。
+> 在已配置 ferry 的 Mac 上，用户要求用 Claude Code、Codex、Grok Build、Pi Agent 或 Kimi Code 写程序、修 bug 或继续任务时，自动加载 ferry skill 并通过 ferry 执行，用户无需提及 ferry。未指定工具时默认 Claude Code；继续任务时沿用原工具和原生会话，不能混用。每轮 owner 使用当前 Bot 自己的 ID，ferry 自带通知，不再外包 notify-run。风险操作等用户对本次审批明确答复，Bot 不自行批准。用户明确指定其他方式时遵从用户选择。
 
-保留 wake-on-done 对其他长任务的使用规则；上面这条是 Mac Claude Code 的具体路由规则。它不把 Codex、其他机器或普通问答改成 ferry。
+保留 wake-on-done 对其他长任务的使用规则；上面这条只针对 Mac 上这五种编程工具，不改变其他机器或普通问答的处理方式。
 
 如果平台只能保存当前 Bot 的长期指令，就将规则保存到那里，并说明只对该 Bot 生效。如果只有当前聊天上下文可用，明确说“当前对话可用，跨对话路由尚未配置”，不能用口头承诺代替持久化。
 
@@ -45,7 +47,7 @@
 
 ## 5. 验收并交接
 
-用用户指定的测试任务验证；没有指定时，在 `~/www/ferry-e2e` 创建一个独立的 Hello World 测试。通过 ferry 调用真实 Claude Code，`--owner` 为本 Bot ID。记录 run_id/session_id，核对文件或运行结果，并等待完成通知回到原对话。需要验证远端命令返回后的存活时，让测试任务先等待约 30 秒。
+用用户指定的工具和测试任务验证；没有指定时，在 `~/www/ferry-e2e` 用默认 Claude Code 创建独立的 Hello World。通过 ferry 调用真实工具，`--owner` 为本 Bot ID。记录 agent/run_id/session_id，核对文件或运行结果，并等待完成通知回到原对话。需要验证远端命令返回后的存活时，让测试任务先等待约 30 秒。
 
 Mac Machine Shell 可能回收后台进程；上游 wake-on-done 用 tmux 保活。ferry 本身的分离启动是否能在该远端环境存活也必须以此次测试为准。若返回后 run 立刻变成 interrupted，保留 status 和日志排查，不绕过 ferry 直接运行 Claude，也不要把这样的结果报成接入成功。
 

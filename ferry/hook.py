@@ -4,10 +4,10 @@ import os
 import signal
 import sys
 import time
-import uuid
+from pathlib import Path
 
-from .core import FerryError, Store, TERMINAL, one_line, read_json, write_json
-from .notify import send
+from .core import FerryError, Store, TERMINAL, one_line, read_json
+from .approval import wait_for_approval
 
 
 def summarize(payload):
@@ -15,10 +15,10 @@ def summarize(payload):
     data = payload["tool_input"]
     if not isinstance(tool, str) or not isinstance(data, dict):
         raise ValueError("Invalid tool request")
-    if tool in ("Edit", "Write", "NotebookEdit"):
-        detail = str(data.get("file_path", data.get("notebook_path", "")))
+    if tool in ("Edit", "Write", "NotebookEdit", "edit", "write"):
+        detail = str(data.get("file_path", data.get("notebook_path", data.get("path", ""))))
         kind, summary = "file_write", f"写入 {detail}"
-    elif tool == "Bash":
+    elif tool in ("Bash", "bash"):
         detail = str(data.get("command", ""))
         kind, summary = "command", f"执行 {detail[:200]}"
         if data.get("description"):
@@ -44,9 +44,8 @@ def approve(store, approval_id, answer, note):
             code = "ALREADY_ANSWERED" if decision["decision"] in ("allowed", "denied") else "RUN_NOT_ACTIVE"
             raise FerryError(code, f'Approval is {decision["decision"]}')
         meta = store.reconcile(store.meta(request["run_id"]))
-        from .core import process_matches
         if (meta["status"] in TERMINAL or meta.get("cancel_requested")
-                or not process_matches(request["hook_pid"], "hook-permission")):
+                or not store.request_alive(request)):
             raise FerryError("RUN_NOT_ACTIVE", "Run or hook is no longer active")
         if not store.decide(request, "allowed" if answer == "allow" else "denied", note):
             raise FerryError("ALREADY_ANSWERED", "Approval already answered")
@@ -57,9 +56,8 @@ class HookCancelled(Exception):
     pass
 
 
-def permission():
+def permission(tool_gate=False):
     decision = {"behavior": "deny", "message": "ferry approval channel failed; operation denied"}
-    request = None
     store = None
 
     def cancelled(_signum, _frame):
@@ -72,43 +70,28 @@ def permission():
         if not run_id:
             raise ValueError("Missing FERRY_RUN_ID")
         payload = json.load(sys.stdin)
-        request = {"approval_id": "a_" + uuid.uuid4().hex, "run_id": run_id,
-                   "hook_pid": os.getpid(), "created_at": time.time(),
-                   "expires_at": time.time() + store.config["approval_timeout_seconds"],
-                   **summarize(payload)}
-        with store.transaction():
-            meta = store.meta(run_id)
-            if meta["status"] in TERMINAL or meta.get("cancel_requested") or not store.alive(meta):
-                raise ValueError("Run inactive")
-            write_json(store.request_path(request["approval_id"]), request, exclusive=True)
-        send(store, meta, f'ferry-approval:{request["approval_id"]}', "waiting_approval",
-             one_line(f'{run_id} 需要审批：{request["summary"]}'), store.request_path(request["approval_id"]))
-        path = store.decision_path(request["approval_id"])
-        while True:
+        description = summarize(payload)
+        if tool_gate:
             with store.transaction():
                 meta = store.meta(run_id)
-                if meta.get("cancel_requested") or meta["status"] == "cancelled":
-                    store.decide(request, "cancelled")
-                elif meta["status"] in TERMINAL or not store.alive(meta):
-                    store.decide(request, "interrupted")
-                elif time.time() >= request["expires_at"]:
-                    store.decide(request, "expired")
-                if path.exists():
-                    answer = read_json(path)
-                    if answer["decision"] == "allowed" and not meta.get("cancel_requested") and meta["status"] not in TERMINAL:
-                        decision = {"behavior": "allow"}
-                    else:
-                        decision = {"behavior": "deny", "message":
-                                    f'ferry approval {answer["decision"]}: {answer["note"]}'}
-                    break
-            time.sleep(store.config["poll_interval_seconds"])
+                if meta.get("agent") != "pi" or meta["status"] in TERMINAL or not store.alive(meta) or meta.get("cancel_requested"):
+                    raise ValueError("Pi run inactive")
+            tool, data = payload["tool_name"], payload["tool_input"]
+            if tool in ("read", "grep", "find", "ls"):
+                decision = {"behavior": "allow"}
+            elif tool in ("write", "edit") and isinstance(data.get("path"), str):
+                path = Path(meta["cwd"]) / data["path"]
+                if Path(meta["cwd"]) in path.resolve().parents:
+                    decision = {"behavior": "allow"}
+                else:
+                    decision = wait_for_approval(store, run_id, description, "hook-tool")
+            else:
+                decision = wait_for_approval(store, run_id, description, "hook-tool")
+        else:
+            decision = wait_for_approval(store, run_id, description, "hook-permission")
     except (Exception, HookCancelled):
         # Malformed stdin/config/state, cancellation, and I/O errors all return a deny.
-        if store and request:
-            try:
-                if store.request_path(request["approval_id"]).exists():
-                    store.decide(request, "cancelled")
-            except Exception:
-                pass
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": decision}}, ensure_ascii=False))
+        pass
+    result = decision if tool_gate else {"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": decision}}
+    print(json.dumps(result, ensure_ascii=False))
     return 0
